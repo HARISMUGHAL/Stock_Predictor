@@ -7,25 +7,9 @@
     }
   ],
   "routes": [
-    {
-      "src": "/predict",
-      "methods": ["POST"],
-      "dest": "sr_model/fusion_api.py"
-    },
-    {
-      "src": "/batch_predict",
-      "methods": ["POST"],
-      "dest": "sr_model/fusion_api.py"
-    },
-    {
-      "src": "/live_predict/(.*)",
-      "methods": ["GET"],
-      "dest": "sr_model/fusion_api.py"
-    },
-    {
-      "src": "/",
-      "methods": ["GET"],
-      "dest": "sr_model/fusion_api.py"
-    }
+    { "src": "/predict", "dest": "sr_model/fusion_api.py" },
+    { "src": "/batch_predict", "dest": "sr_model/fusion_api.py" },
+    { "src": "/live_predict/(.*)", "dest": "sr_model/fusion_api.py" },
+    { "src": "/", "dest": "sr_model/fusion_api.py" }
   ]
 }
