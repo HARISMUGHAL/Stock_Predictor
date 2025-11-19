@@ -82,8 +82,8 @@ async def predict(request: Request):
             }
         }
 
-    except Exception as er:
-        return {"error": str(er)}
+    except Exception as e:
+        return {"error": str(e)}
 
 
 # Batch predict
