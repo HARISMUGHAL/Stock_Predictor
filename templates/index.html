@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Fusion Meta v1 – Stock Predictor Dashboard</title>
+    <style>
+        body { background-color: #1f1f2e; color: #e0e0e0; font-family: Arial; text-align:center; padding:20px; }
+        h1 { color:#00bfff; }
+        input, button { padding:10px; margin:10px; border-radius:6px; }
+        input { width:300px; }
+        button { cursor:pointer; }
+        .btn-live { background:#007acc; color:#fff; }
+        .btn-features { background:#28a745; color:#fff; }
+        .btn-batch { background:#ff7f50; color:#fff; }
+        #result, #batch-result { margin-top:20px; padding:20px; background:#2b2b3d; border-radius:10px; width:70%; margin-left:auto; margin-right:auto; text-align:left; }
+        #features-box { display:none; text-align:left; width:60%; margin:auto; }
+        #batch-upload { display:none; text-align:left; width:60%; margin:auto; }
+        input.feature-input { width:100px; margin:3px; }
+    </style>
+</head>
+<body>
+
+    <h1>Fusion Meta v1 – Stock Predictor Dashboard</h1>
+
+    <!-- Live Predict -->
+    <input id="symbol" placeholder="Enter Stock Symbol (AAPL, TSLA, NVDA)" />
+    <div>
+        <button class="btn-live" onclick="livePredict()">Live Predict</button>
+        <button class="btn-features" onclick="predictByFeatures()">Predict by Features</button>
+        <button class="btn-batch" onclick="showBatchUpload()">Batch Predict</button>
+    </div>
+
+    <!-- Predict by Features -->
+    <div id="features-box">
+        <h3>Enter Feature Values</h3>
+        <div id="feature-inputs"></div>
+        <button onclick="sendFeaturePredict()">Predict</button>
+    </div>
+
+    <!-- Batch Predict -->
+    <div id="batch-upload">
+        <input type="file" id="csvFile" accept=".csv"/>
+        <button onclick="uploadCSV()">Upload & Predict</button>
+    </div>
+
+    <div id="result">Prediction result will appear here.</div>
+    <div id="batch-result"></div>
+
+<script>
+    // Feature names
+    const featureNames = ["open","high","low","close","volume","rsi","vwap"];
+
+    const featureDiv = document.getElementById("feature-inputs");
+    featureDiv.innerHTML = "";
+    featureNames.forEach(name => {
+        const input = document.createElement("input");
+        input.className = "feature-input";
+        input.id = name;
+        input.placeholder = name;
+        featureDiv.appendChild(input);
+    });
+
+    async function livePredict() {
+        const symbol = document.getElementById("symbol").value;
+        if(!symbol) return;
+        const res = await fetch(`/live_predict/${symbol}`);
+        const data = await res.json();
+        document.getElementById("result").innerText = JSON.stringify(data, null, 2);
+    }
+
+    // Auto-refresh every 20 seconds
+    setInterval(() => {
+        const symbol = document.getElementById("symbol").value;
+        if(symbol.trim() !== "") livePredict();
+    }, 20000);
+
+    function predictByFeatures() {
+        document.getElementById("features-box").style.display = "block";
+    }
+
+    function showBatchUpload() {
+        document.getElementById("batch-upload").style.display = "block";
+    }
+
+    async function sendFeaturePredict() {
+        const features = {};
+        featureNames.forEach(name => {
+            features[name] = parseFloat(document.getElementById(name).value) || 0;
+        });
+
+        const res = await fetch("/predict", {
+            method:"POST",
+            headers: {"Content-Type":"application/json"},
+            body: JSON.stringify({features})
+        });
+
+        const data = await res.json();
+        document.getElementById("result").innerText = JSON.stringify(data, null, 2);
+    }
+
+    async function uploadCSV() {
+        const fileInput = document.getElementById("csvFile");
+        if(!fileInput.files.length) return alert("Please select a CSV file.");
+
+        const reader = new FileReader();
+        reader.onload = async function(e) {
+            const text = e.target.result;
+            const lines = text.split("\n").filter(l => l.trim() !== "");
+            const rows = [];
+            lines.forEach(line=>{
+                const cols = line.split(",");
+                if(cols.length<7) return;
+                rows.push({
+                    open: parseFloat(cols[0]),
+                    high: parseFloat(cols[1]),
+                    low: parseFloat(cols[2]),
+                    close: parseFloat(cols[3]),
+                    volume: parseFloat(cols[4]),
+                    rsi: parseFloat(cols[5]),
+                    vwap: parseFloat(cols[6])
+                });
+            });
+
+            const res = await fetch("/batch_predict", {
+                method:"POST",
+                headers: {"Content-Type":"application/json"},
+                body: JSON.stringify({rows})
+            });
+
+            const data = await res.json();
+            document.getElementById("batch-result").innerHTML = "<pre>"+JSON.stringify(data,null,2)+"</pre>";
+        };
+        reader.readAsText(fileInput.files[0]);
+    }
+</script>
+</body>
+</html>
