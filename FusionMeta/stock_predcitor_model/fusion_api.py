@@ -74,8 +74,8 @@ async def predict(request: Request):
             }
         }
 
-    except Exception as e:
-        return {"error": str(e)}
+    except Exception as er:
+        return {"error": str(er)}
 
 # Batch predict
 @app.post("/batch_predict")
