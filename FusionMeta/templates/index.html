@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>Fusion Meta v1 – Stock Predictor Dashboard</title>
+    <title>Fusion Meta  – Stock Predictor Dashboard</title>
     <style>
         body { background-color: #1f1f2e; color: #e0e0e0; font-family: Arial; text-align:center; padding:20px; }
         h1 { color:#00bfff; }
@@ -19,36 +19,42 @@
 </head>
 <body>
 
-    <h1>Fusion Meta v1 – Stock Predictor Dashboard</h1>
+<h1>Fusion Meta  – Stock Predictor Dashboard</h1>
 
-    <!-- Live Predict -->
-    <input id="symbol" placeholder="Enter Stock Symbol (AAPL, TSLA, NVDA)" />
-    <div>
-        <button class="btn-live" onclick="livePredict()">Live Predict</button>
-        <button class="btn-features" onclick="predictByFeatures()">Predict by Features</button>
-        <button class="btn-batch" onclick="showBatchUpload()">Batch Predict</button>
-    </div>
+<!-- Live Predict -->
+<input id="symbol" placeholder="Enter Stock Symbol (AAPL, TSLA, NVDA)" />
+<div>
+    <button class="btn-live" onclick="livePredict()">Live Predict</button>
+    <button class="btn-features" onclick="predictByFeatures()">Predict by Features</button>
+    <button class="btn-batch" onclick="showBatchUpload()">Batch Predict</button>
+</div>
 
-    <!-- Predict by Features -->
-    <div id="features-box">
-        <h3>Enter Feature Values</h3>
-        <div id="feature-inputs"></div>
-        <button onclick="sendFeaturePredict()">Predict</button>
-    </div>
+<!-- Predict by Features -->
+<div id="features-box">
+    <h3>Enter Feature Values</h3>
+    <div id="feature-inputs"></div>
+    <button onclick="sendFeaturePredict()">Predict</button>
+</div>
 
-    <!-- Batch Predict -->
-    <div id="batch-upload">
-        <input type="file" id="csvFile" accept=".csv"/>
-        <button onclick="uploadCSV()">Upload & Predict</button>
-    </div>
+<!-- Batch Predict -->
+<div id="batch-upload">
+    <input type="file" id="csvFile" accept=".csv"/>
+    <button onclick="uploadCSV()">Upload csv file & Predict</button>
+</div>
 
-    <div id="result">Prediction result will appear here.</div>
-    <div id="batch-result"></div>
+<div id="result">Prediction result will appear here.</div>
+<div id="batch-result"></div>
+
 
 <script>
-    // Feature names
-    const featureNames = ["open","high","low","close","volume","rsi","vwap"];
 
+    // Updated feature names (14 features required)
+    const featureNames = [
+        "open","high","low","close","volume","rsi","vwap",
+        "vol_avg","vwap_zone_diff"
+    ];
+
+    // Dynamically create feature input fields
     const featureDiv = document.getElementById("feature-inputs");
     featureDiv.innerHTML = "";
     featureNames.forEach(name => {
@@ -59,6 +65,7 @@
         featureDiv.appendChild(input);
     });
 
+    // Live predict function (unchanged)
     async function livePredict() {
         const symbol = document.getElementById("symbol").value;
         if(!symbol) return;
@@ -81,6 +88,7 @@
         document.getElementById("batch-upload").style.display = "block";
     }
 
+    // Predict by features
     async function sendFeaturePredict() {
         const features = {};
         featureNames.forEach(name => {
@@ -88,7 +96,7 @@
         });
 
         const res = await fetch("/predict", {
-            method:"POST",
+            method: "POST",
             headers: {"Content-Type":"application/json"},
             body: JSON.stringify({features})
         });
@@ -97,40 +105,48 @@
         document.getElementById("result").innerText = JSON.stringify(data, null, 2);
     }
 
-    async function uploadCSV() {
-        const fileInput = document.getElementById("csvFile");
-        if(!fileInput.files.length) return alert("Please select a CSV file.");
+    // Batch predict CSV
+async function uploadCSV() {
+    const fileInput = document.getElementById("csvFile");
+    if(!fileInput.files.length) return alert("Please select a CSV file.");
 
-        const reader = new FileReader();
-        reader.onload = async function(e) {
-            const text = e.target.result;
-            const lines = text.split("\n").filter(l => l.trim() !== "");
-            const rows = [];
-            lines.forEach(line=>{
-                const cols = line.split(",");
-                if(cols.length<7) return;
-                rows.push({
-                    open: parseFloat(cols[0]),
-                    high: parseFloat(cols[1]),
-                    low: parseFloat(cols[2]),
-                    close: parseFloat(cols[3]),
-                    volume: parseFloat(cols[4]),
-                    rsi: parseFloat(cols[5]),
-                    vwap: parseFloat(cols[6])
-                });
+    const reader = new FileReader();
+    reader.onload = async function(e) {
+        const text = e.target.result;
+
+        // Parse CSV
+        const lines = text.split("\n").filter(l => l.trim() !== "");
+        if(lines.length < 2) return alert("CSV must have data rows");
+
+        const headers = lines[0].split(",").map(h => h.trim());
+        const rows = [];
+
+        for(let i=1; i<lines.length; i++){
+            const cols = lines[i].split(",");
+            if(cols.length !== headers.length) continue;
+
+            const row = {};
+            headers.forEach((h, idx) => {
+                const val = parseFloat(cols[idx]);
+                if(!isNaN(val)) row[h] = val;  // only numeric columns
             });
+            if(Object.keys(row).length > 0) rows.push(row);
+        }
 
-            const res = await fetch("/batch_predict", {
-                method:"POST",
-                headers: {"Content-Type":"application/json"},
-                body: JSON.stringify({rows})
-            });
+        if(rows.length === 0) return alert("No numeric data found in CSV");
 
-            const data = await res.json();
-            document.getElementById("batch-result").innerHTML = "<pre>"+JSON.stringify(data,null,2)+"</pre>";
-        };
-        reader.readAsText(fileInput.files[0]);
-    }
+        // Send to backend
+        const res = await fetch("/batch_predict", {
+            method: "POST",
+            headers: {"Content-Type":"application/json"},
+            body: JSON.stringify({rows})
+        });
+
+        const data = await res.json();
+        document.getElementById("batch-result").innerHTML = "<pre>" + JSON.stringify(data, null, 2) + "</pre>";
+    };
+    reader.readAsText(fileInput.files[0]);
+}
 </script>
 </body>
 </html>

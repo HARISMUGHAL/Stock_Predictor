@@ -28,12 +28,11 @@ async def predict(request: Request):
         data = await request.json()
         features = data["features"]
 
-        required = ["open","high","low","close","volume","rsi","vwap","vol_avg","vwap_zone_diff"]
+        required = ["high","low","close","volume","rsi","vwap","vol_avg"]
         for f in required:
             if f not in features:
                 return {"error": f"Missing feature {f}"}
 
-        open_p = float(features["open"])
         high_p = float(features["high"])
         low_p = float(features["low"])
         close_p = float(features["close"])
@@ -41,21 +40,30 @@ async def predict(request: Request):
         rsi = float(features["rsi"])
         vwap = float(features["vwap"])
         vol_avg = float(features["vol_avg"])
-        vwap_zone_diff = float(features["vwap_zone_diff"])
 
-        # Auto features
+        # Auto-calculated features
         zone_price = (high_p + low_p + close_p) / 3
         distance_from_zone = close_p - zone_price
         vwap_distance = close_p - vwap
         rsi_overbought = 1 if rsi > 70 else 0
         rsi_oversold = 1 if rsi < 30 else 0
 
-        # FINAL features array (14 features)
+        # EXACT 14-feature model order
         final = [
-            open_p, high_p, low_p, close_p, volume, rsi, vwap,
-            zone_price, distance_from_zone, vwap_distance,
-            rsi_overbought, rsi_oversold,
-            vol_avg, vwap_zone_diff
+            close_p,             # close
+            zone_price,          # zone_price
+            distance_from_zone,  # distance_from_zone
+            volume,              # volume
+            vol_avg,             # vol_avg
+            0,                   # outcome_label (dummy)
+            high_p,              # high
+            low_p,               # low
+            vwap,                # vwap
+            rsi,                 # rsi
+            vwap_distance,       # vwap_distance
+            rsi_overbought,      # rsi_overbought
+            rsi_oversold,        # rsi_oversold
+            0                    # label (dummy)
         ]
 
         X_scaled = scaler.transform([final])
@@ -77,45 +85,49 @@ async def predict(request: Request):
     except Exception as e:
         return {"error": str(e)}
 
+
 # Batch predict
 @app.post("/batch_predict")
 async def batch_predict(request: Request):
     try:
+        import pandas as pd
+        from io import StringIO
+
         data = await request.json()
         rows = data.get("rows", [])
-        if not rows: return {"error":"No rows provided"}
+        if not rows: return {"error": "No rows provided"}
 
-        X = []
-        for r in rows:
-            open_p = float(r["open"])
-            high_p = float(r["high"])
-            low_p = float(r["low"])
-            close_p = float(r["close"])
-            volume = float(r["volume"])
-            rsi = float(r["rsi"])
-            vwap = float(r["vwap"])
+        # Convert rows to DataFrame
+        df = pd.DataFrame(rows)
 
-            zone_price = (high_p+low_p+close_p)/3
-            distance_from_zone = close_p - zone_price
-            vwap_distance = close_p - vwap
-            rsi_overbought = 1 if rsi>70 else 0
-            rsi_oversold = 1 if rsi<30 else 0
+        # Ensure required numeric columns exist; fill missing with 0
+        numeric_cols = ["open","high","low","close","volume","rsi","vwap","vol_avg","zone_price","distance_from_zone","vwap_distance","rsi_overbought","rsi_oversold","vwap_zone_diff"]
+        for col in numeric_cols:
+            if col not in df.columns:
+                df[col] = 0
 
-            X.append([open_p, high_p, low_p, close_p, volume, rsi, vwap,
-                      zone_price, distance_from_zone, vwap_distance,
-                      rsi_overbought, rsi_oversold])
+        # Compute auto features if they are all zeros
+        df["zone_price"] = df["zone_price"].where(df["zone_price"]!=0, (df["high"] + df["low"] + df["close"])/3)
+        df["distance_from_zone"] = df["distance_from_zone"].where(df["distance_from_zone"]!=0, df["close"] - df["zone_price"])
+        df["vwap_distance"] = df["vwap_distance"].where(df["vwap_distance"]!=0, df["close"] - df["vwap"])
+        df["rsi_overbought"] = df["rsi_overbought"].where(df["rsi_overbought"]!=0, df["rsi"].apply(lambda x: 1 if x>70 else 0))
+        df["rsi_oversold"] = df["rsi_oversold"].where(df["rsi_oversold"]!=0, df["rsi"].apply(lambda x: 1 if x<30 else 0))
 
+        # Build feature matrix
+        X = df[numeric_cols].values
         X_scaled = scaler.transform(X)
+
         preds = model.predict(X_scaled)
         probs = model.predict_proba(X_scaled)
 
         results = []
         for p, pr in zip(preds, probs):
-            results.append({"prediction":"BUY" if p==1 else "SELL","confidence":float(max(pr))})
+            results.append({"prediction": "BUY" if p==1 else "SELL", "confidence": float(max(pr))})
 
-        return {"results":results}
+        return {"results": results}
+
     except Exception as e:
-        return {"error":str(e)}
+        return {"error": str(e)}
 
 # Live predict (unchanged)
 @app.get("/live_predict/{symbol}")
