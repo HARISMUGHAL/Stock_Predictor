@@ -1,7 +1,7 @@
 #!/bin/sh
 
-# Use Railway-provided PORT, default to 8000 if not set
-PORT=${PORT:-8000}
+# Railway automatically sets PORT env variable
+PORT=${PORT:-8000}  # fallback for local testing
 
-echo "Starting server on port $PORT..."
-exec uvicorn main:app --host 0.0.0.0 --port $PORT
+echo "Starting FastAPI server on port $PORT..."
+exec uvicorn main:app --host 0.0.0.0 --port "$PORT"
