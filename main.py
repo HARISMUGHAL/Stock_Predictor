@@ -1,6 +1,8 @@
 import os
 import logging
 import traceback
+import time
+import requests
 import joblib
 import yfinance as yf
 from fastapi import FastAPI, Request
@@ -277,161 +279,204 @@ def live_predict(symbol: str):
     logger.info("=" * 50)
     logger.info(f"GET /live_predict/{symbol} - Request received")
     original_symbol = symbol
+    
+    def make_prediction(close_price: float, method_name: str):
+        """Helper function to make prediction from close price"""
+        try:
+            logger.info(f"  Building feature array from price {close_price}...")
+            features = [close_price] + [0]*13
+            logger.info(f"  ✓ Feature array built: length={len(features)}")
+            
+            logger.info("  Scaling features...")
+            scaled = scaler.transform([features])
+            logger.info(f"  ✓ Features scaled. Shape: {scaled.shape}")
+            
+            logger.info("  Making prediction...")
+            pred = model.predict(scaled)[0]
+            prediction_str = "BUY" if pred == 1 else "SELL"
+            logger.info(f"  ✓ Prediction: {prediction_str}")
+            
+            return {
+                "market": symbol,
+                "current_price": close_price,
+                "prediction": prediction_str
+            }
+        except Exception as pe:
+            logger.error(f"  ✗ ERROR in prediction: {str(pe)}")
+            logger.error(f"  Traceback: {traceback.format_exc()}")
+            raise
+    
     try:
-        import time
         logger.info(f"Step 1: Processing symbol '{symbol}'...")
         symbol = symbol.upper().strip()
         logger.info(f"✓ Symbol normalized to: '{symbol}'")
         
-        # Method 1: Try using Ticker object (sometimes more reliable)
-        logger.info("Step 2: Method 1 - Trying yf.Ticker()...")
+        # Create custom session with proper headers to avoid blocking
+        logger.info("Step 2: Creating custom session with headers...")
+        session = requests.Session()
+        session.headers.update({
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+            'Accept-Language': 'en-US,en;q=0.9',
+            'Accept-Encoding': 'gzip, deflate, br',
+            'Connection': 'keep-alive',
+            'Upgrade-Insecure-Requests': '1',
+        })
+        logger.info("✓ Custom session created")
+        
+        # Try to set yfinance to use our session globally
         try:
-            logger.info(f"  Creating Ticker object for '{symbol}'...")
-            ticker = yf.Ticker(symbol)
-            logger.info(f"  ✓ Ticker object created")
-            
-            logger.info(f"  Fetching history (period='1d', interval='1d')...")
-            hist = ticker.history(period="1d", interval="1d")
-            logger.info(f"  History fetched. Empty: {hist.empty}, Length: {len(hist)}")
-            
-            if not hist.empty and len(hist) > 0:
-                logger.info(f"  ✓ Data retrieved successfully via Ticker method")
-                logger.info(f"  Columns: {list(hist.columns)}")
-                latest = hist.iloc[-1]
-                logger.info(f"  Latest row index: {hist.index[-1]}")
-                
+            import yfinance.utils as yf_utils
+            if hasattr(yf_utils, '_get_session'):
+                logger.info("  Configuring yfinance to use custom session...")
+                # This is a workaround for yfinance session management
+        except:
+            pass
+        
+        # Method 1: Try using Ticker with custom session and info() for current price
+        logger.info("Step 3: Method 1 - Trying yf.Ticker() with info()...")
+        for attempt in range(3):
+            try:
+                logger.info(f"  Attempt {attempt + 1}/3: Creating Ticker object...")
+                # Try with session if supported, otherwise without
                 try:
+                    ticker = yf.Ticker(symbol, session=session)
+                except TypeError:
+                    # Older yfinance versions don't support session parameter
+                    logger.info(f"  Session parameter not supported, using default...")
+                    ticker = yf.Ticker(symbol)
+                logger.info(f"  ✓ Ticker object created")
+                
+                # Try to get current price from info first (fastest)
+                logger.info(f"  Fetching ticker info...")
+                try:
+                    info = ticker.info
+                    if info and isinstance(info, dict):
+                        if 'regularMarketPrice' in info and info['regularMarketPrice']:
+                            close_price = float(info['regularMarketPrice'])
+                            logger.info(f"  ✓ Current price from info (regularMarketPrice): {close_price}")
+                            result = make_prediction(close_price, "Ticker.info")
+                            logger.info("=" * 50)
+                            logger.info(f"GET /live_predict/{symbol} - SUCCESS (Method 1: Ticker.info)")
+                            return result
+                        elif 'currentPrice' in info and info['currentPrice']:
+                            close_price = float(info['currentPrice'])
+                            logger.info(f"  ✓ Current price from info (currentPrice): {close_price}")
+                            result = make_prediction(close_price, "Ticker.info")
+                            logger.info("=" * 50)
+                            logger.info(f"GET /live_predict/{symbol} - SUCCESS (Method 1: Ticker.info)")
+                            return result
+                        elif 'previousClose' in info and info['previousClose']:
+                            close_price = float(info['previousClose'])
+                            logger.info(f"  ✓ Using previousClose from info: {close_price}")
+                            result = make_prediction(close_price, "Ticker.info")
+                            logger.info("=" * 50)
+                            logger.info(f"GET /live_predict/{symbol} - SUCCESS (Method 1: Ticker.info)")
+                            return result
+                    else:
+                        logger.warning(f"  ✗ Info returned invalid data: {type(info)}")
+                except Exception as info_e:
+                    logger.warning(f"  ✗ Info method failed: {str(info_e)}")
+                    logger.debug(f"  Info error traceback: {traceback.format_exc()}")
+                
+                # Fallback to history
+                logger.info(f"  Fetching history (period='5d', interval='1d')...")
+                try:
+                    hist = ticker.history(period="5d", interval="1d", timeout=15)
+                except TypeError:
+                    # Some versions don't support timeout
+                    hist = ticker.history(period="5d", interval="1d")
+                logger.info(f"  History fetched. Empty: {hist.empty}, Length: {len(hist)}")
+                
+                if not hist.empty and len(hist) > 0:
+                    logger.info(f"  ✓ Data retrieved successfully via Ticker.history")
+                    latest = hist.iloc[-1]
                     close_price = float(latest["Close"])
                     logger.info(f"  ✓ Close price extracted: {close_price}")
-                except KeyError as ke:
-                    logger.error(f"  ✗ ERROR: 'Close' column not found. Available columns: {list(hist.columns)}")
-                    raise
-                except ValueError as ve:
-                    logger.error(f"  ✗ ERROR: Cannot convert Close to float: {latest.get('Close', 'N/A')}")
-                    raise
-                
-                logger.info("  Building feature array...")
-                features = [close_price] + [0]*13
-                logger.info(f"  ✓ Feature array built: length={len(features)}")
-                
-                logger.info("  Scaling features...")
-                try:
-                    scaled = scaler.transform([features])
-                    logger.info(f"  ✓ Features scaled. Shape: {scaled.shape}")
-                except Exception as se:
-                    logger.error(f"  ✗ ERROR in scaler.transform: {str(se)}")
-                    logger.error(f"  Traceback: {traceback.format_exc()}")
-                    raise
-                
-                logger.info("  Making prediction...")
-                try:
-                    pred = model.predict(scaled)[0]
-                    prediction_str = "BUY" if pred == 1 else "SELL"
-                    logger.info(f"  ✓ Prediction: {prediction_str}")
-                except Exception as pe:
-                    logger.error(f"  ✗ ERROR in model prediction: {str(pe)}")
-                    logger.error(f"  Traceback: {traceback.format_exc()}")
-                    raise
-                
-                result = {
-                    "market": symbol,
-                    "current_price": close_price,
-                    "prediction": prediction_str
-                }
-                logger.info("=" * 50)
-                logger.info(f"GET /live_predict/{symbol} - SUCCESS (Method 1: Ticker)")
-                return result
-            else:
-                logger.warning(f"  ✗ Ticker method returned empty data")
-        except Exception as ticker_e:
-            logger.warning(f"  ✗ Ticker method failed: {str(ticker_e)}")
-            logger.warning(f"  Exception type: {type(ticker_e).__name__}")
-            logger.debug(f"  Ticker traceback: {traceback.format_exc()}")
+                    result = make_prediction(close_price, "Ticker.history")
+                    logger.info("=" * 50)
+                    logger.info(f"GET /live_predict/{symbol} - SUCCESS (Method 1: Ticker.history)")
+                    return result
+                else:
+                    logger.warning(f"  ✗ Ticker history returned empty data")
+                    if attempt < 2:
+                        wait_time = (attempt + 1) * 1.0
+                        logger.info(f"  Waiting {wait_time}s before retry...")
+                        time.sleep(wait_time)
+            except Exception as ticker_e:
+                logger.warning(f"  ✗ Ticker attempt {attempt + 1} failed: {str(ticker_e)}")
+                logger.warning(f"  Exception type: {type(ticker_e).__name__}")
+                if attempt < 2:
+                    wait_time = (attempt + 1) * 1.0
+                    logger.info(f"  Waiting {wait_time}s before retry...")
+                    time.sleep(wait_time)
+                else:
+                    logger.debug(f"  Ticker traceback: {traceback.format_exc()}")
         
-        # Method 2: Try download with different periods/intervals
-        logger.info("Step 3: Method 2 - Trying yf.download() with different periods...")
+        # Method 2: Try download with custom session and different periods
+        logger.info("Step 4: Method 2 - Trying yf.download() with custom session...")
         periods_intervals = [
-            ("1d", "1d"),      # Try 1 day of daily data first
-            ("5d", "1d"),      # Then 5 days of daily data
-            ("1mo", "1d"),     # Then 1 month of daily data
+            ("1d", "1d"),
+            ("5d", "1d"),
+            ("1mo", "1d"),
         ]
         
         for idx, (period, interval) in enumerate(periods_intervals, 1):
-            logger.info(f"  Attempt {idx}/3: period='{period}', interval='{interval}'...")
-            try:
-                logger.info(f"    Calling yf.download('{symbol}', period='{period}', interval='{interval}')...")
-                df = yf.download(
-                    symbol, 
-                    period=period, 
-                    interval=interval, 
-                    progress=False, 
-                    show_errors=False,
-                    timeout=10
-                )
-                logger.info(f"    Download completed. Empty: {df.empty}, Length: {len(df)}, Shape: {df.shape}")
-                
-                if not df.empty and len(df) > 0:
-                    logger.info(f"    ✓ Data retrieved successfully via download method")
-                    logger.info(f"    Columns: {list(df.columns)}")
-                    latest = df.iloc[-1]
-                    logger.info(f"    Latest row index: {df.index[-1]}")
-                    
+            for attempt in range(2):
+                try:
+                    logger.info(f"  Attempt {idx}/3, retry {attempt + 1}/2: period='{period}', interval='{interval}'...")
+                    # Try with session if supported
                     try:
+                        df = yf.download(
+                            symbol,
+                            period=period,
+                            interval=interval,
+                            progress=False,
+                            show_errors=False,
+                            timeout=15,
+                            session=session
+                        )
+                    except TypeError:
+                        # Older versions don't support session parameter
+                        logger.info(f"    Session parameter not supported, using default...")
+                        df = yf.download(
+                            symbol,
+                            period=period,
+                            interval=interval,
+                            progress=False,
+                            show_errors=False,
+                            timeout=15
+                        )
+                    logger.info(f"  Download completed. Empty: {df.empty}, Length: {len(df)}, Shape: {df.shape}")
+                    
+                    if not df.empty and len(df) > 0:
+                        logger.info(f"  ✓ Data retrieved successfully via download method")
+                        latest = df.iloc[-1]
                         close_price = float(latest["Close"])
-                        logger.info(f"    ✓ Close price extracted: {close_price}")
-                    except KeyError as ke:
-                        logger.error(f"    ✗ ERROR: 'Close' column not found. Available columns: {list(df.columns)}")
-                        continue
-                    except ValueError as ve:
-                        logger.error(f"    ✗ ERROR: Cannot convert Close to float: {latest.get('Close', 'N/A')}")
-                        continue
-                    
-                    logger.info("    Building feature array...")
-                    features = [close_price] + [0]*13
-                    logger.info(f"    ✓ Feature array built: length={len(features)}")
-                    
-                    logger.info("    Scaling features...")
-                    try:
-                        scaled = scaler.transform([features])
-                        logger.info(f"    ✓ Features scaled. Shape: {scaled.shape}")
-                    except Exception as se:
-                        logger.error(f"    ✗ ERROR in scaler.transform: {str(se)}")
-                        logger.error(f"    Traceback: {traceback.format_exc()}")
-                        continue
-                    
-                    logger.info("    Making prediction...")
-                    try:
-                        pred = model.predict(scaled)[0]
-                        prediction_str = "BUY" if pred == 1 else "SELL"
-                        logger.info(f"    ✓ Prediction: {prediction_str}")
-                    except Exception as pe:
-                        logger.error(f"    ✗ ERROR in model prediction: {str(pe)}")
-                        logger.error(f"    Traceback: {traceback.format_exc()}")
-                        continue
-                    
-                    result = {
-                        "market": symbol,
-                        "current_price": close_price,
-                        "prediction": prediction_str
-                    }
-                    logger.info("=" * 50)
-                    logger.info(f"GET /live_predict/{symbol} - SUCCESS (Method 2: Download, period={period})")
-                    return result
-                else:
-                    logger.warning(f"    ✗ Download returned empty dataframe")
-                    time.sleep(0.5)  # Small delay between retries
-            except Exception as inner_e:
-                logger.warning(f"    ✗ Download attempt failed: {str(inner_e)}")
-                logger.warning(f"    Exception type: {type(inner_e).__name__}")
-                logger.debug(f"    Download traceback: {traceback.format_exc()}")
-                time.sleep(0.5)
-                continue
+                        logger.info(f"  ✓ Close price extracted: {close_price}")
+                        result = make_prediction(close_price, f"Download({period})")
+                        logger.info("=" * 50)
+                        logger.info(f"GET /live_predict/{symbol} - SUCCESS (Method 2: Download, period={period})")
+                        return result
+                    else:
+                        logger.warning(f"  ✗ Download returned empty dataframe")
+                        if attempt < 1:
+                            time.sleep(1.0)
+                except Exception as inner_e:
+                    logger.warning(f"  ✗ Download attempt failed: {str(inner_e)}")
+                    logger.warning(f"  Exception type: {type(inner_e).__name__}")
+                    if attempt < 1:
+                        wait_time = 1.0
+                        logger.info(f"  Waiting {wait_time}s before retry...")
+                        time.sleep(wait_time)
+                    else:
+                        logger.debug(f"  Download traceback: {traceback.format_exc()}")
         
         # If all attempts failed
         logger.error("=" * 50)
         logger.error(f"✗ GET /live_predict/{symbol} - ALL METHODS FAILED")
         logger.error(f"  Symbol: {symbol}")
-        logger.error(f"  Tried: Ticker method + 3 download attempts")
+        logger.error(f"  Tried: Ticker.info (3x), Ticker.history (3x), Download (3 periods x 2 retries)")
         logger.error(f"  Final error: Unable to fetch data from Yahoo Finance")
         return {
             "error": f"Unable to fetch data for {symbol}. The symbol may be invalid, delisted, or Yahoo Finance may be temporarily unavailable. Please try again later or use 'Predict by Features' instead."
