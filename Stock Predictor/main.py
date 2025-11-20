@@ -7,11 +7,10 @@ from fastapi.responses import HTMLResponse
 app = FastAPI()
 
 # ---------------- Railway-compatible relative paths ----------------
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))  # sr_model folder
-MODEL_DIR = os.path.join(BASE_DIR, "fusion_model")
-MODEL_PATH = os.path.join(MODEL_DIR, "fusion_meta_v1_20251108_021325.pkl")
-SCALER_PATH = os.path.join(MODEL_DIR, "fusion_meta_v1_20251108_021325_scaler.pkl")
-HTML_PATH = os.path.join(BASE_DIR, "templates/index.html")  # up 1 level to templates
+MODEL_DIR = "fusion_model"
+MODEL_PATH = "fusion_meta_v1_20251108_021325.pkl"
+SCALER_PATH = "fusion_meta_v1_20251108_021325_scaler.pkl"
+HTML_PATH = "index.html"
 
 # ---------------- Load model, scaler, HTML ----------------
 model = joblib.load(MODEL_PATH)
