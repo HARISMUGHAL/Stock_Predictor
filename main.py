@@ -130,7 +130,7 @@ async def batch_predict(request: Request):
 # Live predict (unchanged)
 @app.get("/live_predict/{symbol}")
 def live_predict(symbol: str):
-    df = yf.download(symbol, period="5d", interval="1m")
+    df = yf.download(symbol, period="5d", interval="1d")
     if df.empty: return {"error":"invalid ticker"}
     latest = df.iloc[-1]
     features = [float(latest["Close"])]+[0]*13
