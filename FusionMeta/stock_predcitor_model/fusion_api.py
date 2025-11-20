@@ -6,20 +6,19 @@ from fastapi.responses import HTMLResponse
 
 app = FastAPI()
 
-# Paths
-BASE_DIR = r"C:\Users\Administrator\PycharmProjects\work\sr_model"
+# ---------------- Railway-compatible relative paths ----------------
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))  # sr_model folder
 MODEL_DIR = os.path.join(BASE_DIR, "fusion_model")
 MODEL_PATH = os.path.join(MODEL_DIR, "fusion_meta_v1_20251108_021325.pkl")
-SCALER_PATH_1 = os.path.join(MODEL_DIR, "fusion_meta_v1_20251108_021325_scaler.pkl")
-
-model = joblib.load(MODEL_PATH)
 SCALER_PATH = os.path.join(MODEL_DIR, "fusion_meta_v1_20251108_021325_scaler.pkl")
+HTML_PATH = os.path.join(BASE_DIR, "templates/index.html")  # up 1 level to templates
+
+# ---------------- Load model, scaler, HTML ----------------
+model = joblib.load(MODEL_PATH)
 scaler = joblib.load(SCALER_PATH)
 
-# Load HTML
-with open(os.path.join("templates", "index.html"), "r", encoding="utf-8") as f:
+with open(HTML_PATH, "r", encoding="utf-8") as f:
     HTML_PAGE = f.read()
-
 
 # Feature prediction
 @app.post("/predict")
@@ -82,8 +81,8 @@ async def predict(request: Request):
             }
         }
 
-    except Exception as er:
-        return {"error": str(er)}
+    except Exception as e:
+        return {"error": str(e)}
 
 
 # Batch predict
@@ -144,3 +143,13 @@ def live_predict(symbol: str):
 @app.get("/", response_class=HTMLResponse)
 def dashboard(request: Request):
     return HTMLResponse(content=HTML_PAGE)
+
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(
+        "sr_model.fusion_api:app",
+        host="0.0.0.0",
+        port=int(os.environ.get("PORT", 8000)),
+        reload=True
+    )
