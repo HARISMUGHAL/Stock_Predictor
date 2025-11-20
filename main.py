@@ -148,5 +148,12 @@ if __name__ == "__main__":
     import uvicorn
     import os
 
-    port = int(os.environ.get("PORT", 8000))
-    uvicorn.run("main:app", host="0.0.0.0", port=port, reload=True)
+    raw_port = os.environ.get("PORT", "8000")
+
+    # FIX: If PORT comes as "$PORT", convert to default 8000
+    if not raw_port.isdigit():
+        raw_port = "8000"
+
+    port = int(raw_port)
+
+    uvicorn.run(app, host="0.0.0.0", port=port)
