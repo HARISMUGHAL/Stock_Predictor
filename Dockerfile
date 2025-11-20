@@ -19,5 +19,5 @@ COPY . .
 # Expose FastAPI port
 EXPOSE 8000
 
-# Start Uvicorn server
+# Run FastAPI with Uvicorn and dynamic PORT
 CMD ["sh", "-c", "uvicorn main:app --host 0.0.0.0 --port ${PORT:-8000}"]
