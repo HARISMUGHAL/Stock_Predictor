@@ -419,12 +419,13 @@ def live_predict(symbol: str):
             ("1d", "1d"),
             ("5d", "1d"),
             ("1mo", "1d"),
+            ("3mo", "1d"),  # Add longer period
         ]
         
         for idx, (period, interval) in enumerate(periods_intervals, 1):
-            for attempt in range(2):
+            for attempt in range(3):  # Increase retries to 3
                 try:
-                    logger.info(f"  Attempt {idx}/3, retry {attempt + 1}/2: period='{period}', interval='{interval}'...")
+                    logger.info(f"  Attempt {idx}/{len(periods_intervals)}, retry {attempt + 1}/3: period='{period}', interval='{interval}'...")
                     # Try with session if supported
                     try:
                         df = yf.download(
@@ -433,20 +434,33 @@ def live_predict(symbol: str):
                             interval=interval,
                             progress=False,
                             show_errors=False,
-                            timeout=15,
-                            session=session
+                            timeout=20,  # Increase timeout
+                            session=session,
+                            threads=False  # Disable threading for more reliable results
                         )
                     except TypeError:
                         # Older versions don't support session parameter
-                        logger.info(f"    Session parameter not supported, using default...")
-                        df = yf.download(
-                            symbol,
-                            period=period,
-                            interval=interval,
-                            progress=False,
-                            show_errors=False,
-                            timeout=15
-                        )
+                        logger.info(f"    Session parameter not supported, trying without session...")
+                        try:
+                            df = yf.download(
+                                symbol,
+                                period=period,
+                                interval=interval,
+                                progress=False,
+                                show_errors=False,
+                                timeout=20,
+                                threads=False
+                            )
+                        except TypeError:
+                            # Some versions don't support threads parameter
+                            df = yf.download(
+                                symbol,
+                                period=period,
+                                interval=interval,
+                                progress=False,
+                                show_errors=False,
+                                timeout=20
+                            )
                     logger.info(f"  Download completed. Empty: {df.empty}, Length: {len(df)}, Shape: {df.shape}")
                     
                     if not df.empty and len(df) > 0:
@@ -460,24 +474,67 @@ def live_predict(symbol: str):
                         return result
                     else:
                         logger.warning(f"  ✗ Download returned empty dataframe")
-                        if attempt < 1:
-                            time.sleep(1.0)
+                        if attempt < 2:
+                            wait_time = (attempt + 1) * 1.5
+                            logger.info(f"  Waiting {wait_time}s before retry...")
+                            time.sleep(wait_time)
                 except Exception as inner_e:
                     logger.warning(f"  ✗ Download attempt failed: {str(inner_e)}")
                     logger.warning(f"  Exception type: {type(inner_e).__name__}")
-                    if attempt < 1:
-                        wait_time = 1.0
+                    if attempt < 2:
+                        wait_time = (attempt + 1) * 1.5
                         logger.info(f"  Waiting {wait_time}s before retry...")
                         time.sleep(wait_time)
                     else:
                         logger.debug(f"  Download traceback: {traceback.format_exc()}")
         
+        # Method 3: Try direct API call as last resort
+        logger.info("Step 5: Method 3 - Trying direct Yahoo Finance API call...")
+        try:
+            import json
+            url = f"https://query1.finance.yahoo.com/v8/finance/chart/{symbol}?interval=1d&range=5d"
+            logger.info(f"  Making direct API call to: {url}")
+            response = session.get(url, timeout=15)
+            if response.status_code == 200:
+                data = response.json()
+                if 'chart' in data and 'result' in data['chart'] and len(data['chart']['result']) > 0:
+                    result_data = data['chart']['result'][0]
+                    if 'meta' in result_data and 'regularMarketPrice' in result_data['meta']:
+                        close_price = float(result_data['meta']['regularMarketPrice'])
+                        logger.info(f"  ✓ Current price from direct API: {close_price}")
+                        result = make_prediction(close_price, "Direct API")
+                        logger.info("=" * 50)
+                        logger.info(f"GET /live_predict/{symbol} - SUCCESS (Method 3: Direct API)")
+                        return result
+                    elif 'indicators' in result_data and 'quote' in result_data['indicators']:
+                        quotes = result_data['indicators']['quote'][0]
+                        if 'close' in quotes and len(quotes['close']) > 0:
+                            # Get last non-null close price
+                            close_prices = [p for p in quotes['close'] if p is not None]
+                            if close_prices:
+                                close_price = float(close_prices[-1])
+                                logger.info(f"  ✓ Current price from direct API (indicators): {close_price}")
+                                result = make_prediction(close_price, "Direct API (indicators)")
+                                logger.info("=" * 50)
+                                logger.info(f"GET /live_predict/{symbol} - SUCCESS (Method 3: Direct API)")
+                                return result
+            else:
+                logger.warning(f"  ✗ Direct API returned status code: {response.status_code}")
+        except Exception as api_e:
+            logger.warning(f"  ✗ Direct API method failed: {str(api_e)}")
+            logger.debug(f"  API error traceback: {traceback.format_exc()}")
+        
         # If all attempts failed
         logger.error("=" * 50)
         logger.error(f"✗ GET /live_predict/{symbol} - ALL METHODS FAILED")
         logger.error(f"  Symbol: {symbol}")
-        logger.error(f"  Tried: Ticker.info (3x), Ticker.history (3x), Download (3 periods x 2 retries)")
+        logger.error(f"  Tried: Ticker.info (3x), Ticker.history (3x), Download (4 periods x 3 retries), Direct API")
         logger.error(f"  Final error: Unable to fetch data from Yahoo Finance")
+        logger.error(f"  This could be due to:")
+        logger.error(f"    - Symbol is invalid or delisted")
+        logger.error(f"    - Yahoo Finance is blocking requests from this server")
+        logger.error(f"    - Network connectivity issues")
+        logger.error(f"    - Rate limiting from Yahoo Finance")
         return {
             "error": f"Unable to fetch data for {symbol}. The symbol may be invalid, delisted, or Yahoo Finance may be temporarily unavailable. Please try again later or use 'Predict by Features' instead."
         }
