@@ -1,7 +1,7 @@
 # Base Python image
 FROM python:3.12-slim
 
-# Install system dependencies (libgomp1 for LightGBM)
+# Install system dependencies
 RUN apt-get update && apt-get install -y libgomp1 && rm -rf /var/lib/apt/lists/*
 
 # Set working directory
@@ -14,8 +14,11 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy project files
 COPY . .
 
-# Expose FastAPI port
+# Make start.sh executable
+RUN chmod +x start.sh
+
+# Expose port (for local testing, optional)
 EXPOSE 8000
 
-# Start FastAPI app
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+# Start app via shell script
+CMD ["./start.sh"]
