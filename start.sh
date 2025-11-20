@@ -1,10 +1,7 @@
-#!/bin/bash
+#!/bin/sh
 
-# If Railway sends literal "$PORT", fix it
-if [[ "$PORT" == "\$PORT" ]] || [[ "$PORT" == '$PORT' ]]; then
-  export PORT=8000
-fi
+# Use Railway-provided PORT, default to 8000 if not set
+PORT=${PORT:-8000}
 
-echo "Starting server on port: $PORT"
-
+echo "Starting server on port $PORT..."
 exec uvicorn main:app --host 0.0.0.0 --port $PORT
